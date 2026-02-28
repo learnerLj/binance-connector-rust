@@ -15,12 +15,29 @@
 use crate::derivatives_trading_usds_futures::rest_api::models;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum QueryOrderResponseStatus {
+    Code(i64),
+    Text(String),
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct QueryOrderResponse {
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
-    pub status: Option<i64>,
+    pub status: Option<QueryOrderResponseStatus>,
+    #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
+    pub result: Option<Box<models::QueryOrderResponseResult>>,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Deserialize)]
+struct QueryOrderResponseWrapped {
+    #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
+    pub status: Option<QueryOrderResponseStatus>,
     #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<models::QueryOrderResponseResult>>,
 }
@@ -33,5 +50,79 @@ impl QueryOrderResponse {
             status: None,
             result: None,
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for QueryOrderResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if value.get("result").is_some() {
+            let wrapped: QueryOrderResponseWrapped =
+                serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+            return Ok(Self {
+                id: wrapped.id,
+                status: wrapped.status,
+                result: wrapped.result,
+            });
+        }
+
+        // Backward-compat: some environments still return flat order payload for
+        // GET /fapi/v1/order. Normalize into `result` so upper layers can keep a
+        // single access path.
+        let flat: models::QueryOrderResponseResult =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            id: None,
+            status: None,
+            result: Some(Box::new(flat)),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_order_response_accepts_numeric_status() {
+        let raw = r#"{"id":"abc","status":200,"result":{"status":"NEW"}}"#;
+        let parsed: QueryOrderResponse = serde_json::from_str(raw).expect("deserialize numeric status");
+        assert_eq!(parsed.status, Some(QueryOrderResponseStatus::Code(200)));
+        assert!(parsed.result.is_some());
+    }
+
+    #[test]
+    fn query_order_response_accepts_string_status_in_wrapper() {
+        let raw = r#"{"id":"abc","status":"FILLED","result":{"status":"FILLED"}}"#;
+        let parsed: QueryOrderResponse = serde_json::from_str(raw).expect("deserialize string status");
+        assert_eq!(
+            parsed.status,
+            Some(QueryOrderResponseStatus::Text("FILLED".to_string()))
+        );
+        assert!(parsed.result.is_some());
+    }
+
+    #[test]
+    fn query_order_response_accepts_legacy_flat_payload() {
+        let raw = r#"{
+            "symbol":"BTCUSDT",
+            "orderId":123456,
+            "clientOrderId":"cid-1",
+            "status":"FILLED",
+            "executedQty":"0.001",
+            "avgPrice":"63000.10"
+        }"#;
+        let parsed: QueryOrderResponse = serde_json::from_str(raw).expect("deserialize legacy flat payload");
+        assert_eq!(parsed.status, None);
+        let result = parsed.result.expect("normalized result");
+        assert_eq!(result.order_id, Some(123456));
+        assert_eq!(result.client_order_id.as_deref(), Some("cid-1"));
+        assert_eq!(result.status.as_deref(), Some("FILLED"));
+        assert_eq!(result.executed_qty.as_deref(), Some("0.001"));
+        assert_eq!(result.avg_price.as_deref(), Some("63000.10"));
     }
 }

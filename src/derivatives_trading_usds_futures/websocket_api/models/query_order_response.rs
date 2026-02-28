@@ -16,12 +16,19 @@ use crate::derivatives_trading_usds_futures::websocket_api::models;
 use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use serde_json::Value;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum QueryOrderResponseStatus {
+    Code(i64),
+    Text(String),
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueryOrderResponse {
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
-    pub status: Option<i64>,
+    pub status: Option<QueryOrderResponseStatus>,
     #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<models::QueryOrderResponseResult>>,
 }
