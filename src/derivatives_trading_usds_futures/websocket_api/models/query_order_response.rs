@@ -13,22 +13,17 @@
 
 #![allow(unused_imports)]
 use crate::derivatives_trading_usds_futures::websocket_api::models;
-use serde::{Deserialize, Deserializer, Serialize, de::Error};
-use serde_json::Value;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum QueryOrderResponseStatus {
-    Code(i64),
-    Text(String),
-}
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueryOrderResponse {
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    // WebSocket API general response status code.
+    // Reference:
+    // https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-api-general-info
     #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
-    pub status: Option<QueryOrderResponseStatus>,
+    pub status: Option<i64>,
     #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<models::QueryOrderResponseResult>>,
 }

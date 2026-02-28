@@ -14,20 +14,16 @@
 #![allow(unused_imports)]
 use crate::derivatives_trading_usds_futures::rest_api::models;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum QueryOrderResponseStatus {
-    Code(i64),
-    Text(String),
-}
+use serde_json::Value;
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct QueryOrderResponse {
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    // Official Query Order response uses transport status code at top-level.
+    // Reference: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Order
     #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
-    pub status: Option<QueryOrderResponseStatus>,
+    pub status: Option<i64>,
     #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<models::QueryOrderResponseResult>>,
 }
@@ -37,7 +33,7 @@ struct QueryOrderResponseWrapped {
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "status", skip_serializing_if = "Option::is_none")]
-    pub status: Option<QueryOrderResponseStatus>,
+    pub status: Option<i64>,
     #[serde(rename = "result", skip_serializing_if = "Option::is_none")]
     pub result: Option<Box<models::QueryOrderResponseResult>>,
 }
@@ -58,8 +54,13 @@ impl<'de> Deserialize<'de> for QueryOrderResponse {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let value = Value::deserialize(deserializer)?;
 
+        // Accept both documented wrapped payload and observed flat payload.
+        // Wrapped docs:
+        // https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Order
+        // Flat docs reference (similar order object shape):
+        // https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Query-Current-Open-Order
         if value.get("result").is_some() {
             let wrapped: QueryOrderResponseWrapped =
                 serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -70,9 +71,6 @@ impl<'de> Deserialize<'de> for QueryOrderResponse {
             });
         }
 
-        // Backward-compat: some environments still return flat order payload for
-        // GET /fapi/v1/order. Normalize into `result` so upper layers can keep a
-        // single access path.
         let flat: models::QueryOrderResponseResult =
             serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
@@ -91,19 +89,16 @@ mod tests {
     fn query_order_response_accepts_numeric_status() {
         let raw = r#"{"id":"abc","status":200,"result":{"status":"NEW"}}"#;
         let parsed: QueryOrderResponse = serde_json::from_str(raw).expect("deserialize numeric status");
-        assert_eq!(parsed.status, Some(QueryOrderResponseStatus::Code(200)));
+        assert_eq!(parsed.status, Some(200));
         assert!(parsed.result.is_some());
     }
 
     #[test]
-    fn query_order_response_accepts_string_status_in_wrapper() {
+    fn query_order_response_rejects_string_status_in_wrapper() {
         let raw = r#"{"id":"abc","status":"FILLED","result":{"status":"FILLED"}}"#;
-        let parsed: QueryOrderResponse = serde_json::from_str(raw).expect("deserialize string status");
-        assert_eq!(
-            parsed.status,
-            Some(QueryOrderResponseStatus::Text("FILLED".to_string()))
-        );
-        assert!(parsed.result.is_some());
+        let err = serde_json::from_str::<QueryOrderResponse>(raw).expect_err("string top-level status must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("data did not match any variant"), "unexpected error: {msg}");
     }
 
     #[test]
